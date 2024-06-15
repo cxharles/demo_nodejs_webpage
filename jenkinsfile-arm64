@@ -1,0 +1,55 @@
+pipeline {
+    agent any
+    
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+
+    stages {
+        stage('Clone') {
+            steps {
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/cxharles/demo_nodejs_webpage.git'
+            }
+        }
+        
+        stage('sonarqube-scan') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh """ $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=nodejs-2 -Dsonar.projectName=nodejs-2 -Dsonar.java.sources=. """
+                }
+            }
+        }
+        
+        stage('OWASP') {
+            steps {
+                dependencyCheck additionalArguments: ' --scan ./ ', odcInstallation: 'DC'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('DockerBuild') {
+            steps {
+                sh 'docker build -t nodejs-2:latest .'
+                sh 'docker tag nodejs-2:latest charlesjatto/nodejs-2:latest '
+            }
+        }
+        
+        stage('Trivy Image Scan') {
+            steps {
+                sh 'trivy image --format table -o trivy-image-report.html charlesjatto/nodejs-2:latest '
+            }
+        }
+        
+        stage('DockerPush') {
+            steps {
+                script {
+                    withCredentials([string(credentialsId: 'DockerHubCredentials', variable: 'DockerHubCredentials')]) {
+                        sh 'docker login -u charlesjatto -p ${DockerHubCredentials}'
+                        sh 'docker push charlesjatto/nodejs-2:latest'
+                        sh 'docker run -d --name nodejs-2 -p 4200:8081 charlesjatto/nodejs-2:latest'
+                   }
+                }
+            }
+        }
+    }
+}
